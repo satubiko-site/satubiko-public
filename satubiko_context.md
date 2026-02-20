@@ -69,6 +69,25 @@ source_state により重複防止。
 - line_webhook.php
 - line_config.php（公開禁止）
 
+### member：会員専用ページ
+- multiupload：共有書庫
+- trip：山行管理表
+
+### smaho：スマホ投稿
+- post.php
+- data/smaho.csv
+
+### tool：管理ツール
+- top.php：総合メニュー
+- articles_admin.php：山行記事管理ツール
+
+### 山行記事
+- sanko：山行報告
+- yamareco：ヤマレコ記事
+- youtube：YouTube動画
+- smaho：スマホ記事
+- blog：FC2ブログ
+
 ---
 
 ## 6. 公開禁止情報
