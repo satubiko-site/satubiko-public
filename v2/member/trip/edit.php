@@ -11,9 +11,124 @@ header('Content-Type: text/html; charset=UTF-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 
+
 $dbPath = __DIR__ . '/trip_manage.db';
 
+if (is_file(__DIR__ . '/line_config.php')) {
+    require_once __DIR__ . '/line_config.php';
+}
+if (!defined('TRIP_NOTIFY_METHOD')) define('TRIP_NOTIFY_METHOD', 'mail'); // 'mail' or 'line'
+if (!defined('TRIP_NOTIFY_SUBMIT_TO')) define('TRIP_NOTIFY_SUBMIT_TO', 'mtakaha@lemon.plala.or.jp');
+if (!defined('TRIP_NOTIFY_ALARM_TO')) define('TRIP_NOTIFY_ALARM_TO', 'mtakaha@lemon.plala.or.jp');
+if (!defined('TRIP_NOTIFY_FROM')) define('TRIP_NOTIFY_FROM', '');
+if (!defined('TRIP_NOTIFY_FROM_NAME')) define('TRIP_NOTIFY_FROM_NAME', '山びこ山行管理');
+
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
+
+function trip_notify_method(): string {
+    $m = strtolower(trim((string)TRIP_NOTIFY_METHOD));
+    return ($m === 'line') ? 'line' : 'mail';
+}
+
+function trip_base_url(): string {
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    $scheme = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $dir  = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/');
+    return $scheme . '://' . $host . $dir;
+}
+
+function trip_planlist_url(?string $dateYmd=null): string {
+    $y = (int)date('Y');
+    $m = (int)date('n');
+    if ($dateYmd !== '' && $dateYmd !== null && preg_match('/^(\d{4})-(\d{2})-\d{2}$/', $dateYmd, $mm)) {
+        $y = (int)$mm[1];
+        $m = (int)$mm[2];
+    }
+    return trip_base_url() . '/planlist.php?y=' . $y . '&m=' . $m;
+}
+
+function trip_format_date_range_jp(string $dateYmd, string $dateTo=''): string {
+    if ($dateYmd === '') return '';
+    $ts1 = strtotime($dateYmd);
+    if ($ts1 === false) return $dateYmd;
+    $wd = ['日','月','火','水','木','金','土'];
+    $s1 = date('n月j日', $ts1) . '(' . $wd[(int)date('w', $ts1)] . ')';
+    if ($dateTo === '' || $dateTo === $dateYmd) return $s1;
+    $ts2 = strtotime($dateTo);
+    if ($ts2 === false) return $s1 . '～' . $dateTo;
+    $s2 = date('n月j日', $ts2) . '(' . $wd[(int)date('w', $ts2)] . ')';
+    return $s1 . '～' . $s2;
+}
+
+function trip_format_type_style(string $tripType, string $tripStyle): string {
+    $tripType = trim($tripType);
+    $tripStyle = trim($tripStyle);
+    if ($tripType !== '' && $tripStyle !== '') return $tripType . '／' . $tripStyle;
+    return ($tripType !== '') ? $tripType : $tripStyle;
+}
+
+function trip_format_people(?int $people): string {
+    $n = (int)$people;
+    return ($n > 0) ? ($n . '名') : '';
+}
+
+function trip_mail_headers(): string {
+    $headers = [
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8',
+        'Content-Transfer-Encoding: 8bit',
+    ];
+    $from = trim((string)TRIP_NOTIFY_FROM);
+    if ($from !== '') {
+        $fromName = trim((string)TRIP_NOTIFY_FROM_NAME);
+        if ($fromName !== '') {
+            $headers[] = 'From: ' . mb_encode_mimeheader($fromName, 'UTF-8') . ' <' . $from . '>';
+        } else {
+            $headers[] = 'From: ' . $from;
+        }
+    }
+    return implode("\r\n", $headers);
+}
+
+function trip_send_mail(string $to, string $subject, string $body): bool {
+    if (trim($to) === '') return false;
+    if (function_exists('mb_language')) @mb_language('Japanese');
+    if (function_exists('mb_internal_encoding')) @mb_internal_encoding('UTF-8');
+    $headers = trip_mail_headers();
+    if (function_exists('mb_send_mail')) {
+        return @mb_send_mail($to, $subject, $body, $headers);
+    }
+    return @mail($to, $subject, $body, $headers);
+}
+
+function build_submit_mail(array $r): array {
+    $body = [];
+    $body[] = '以下のとおり山行計画を提出します。';
+    $body[] = '';
+    $body[] = '日程：' . trip_format_date_range_jp((string)($r['date_ymd'] ?? ''), (string)($r['date_to'] ?? ''));
+    $body[] = '山域：' . (string)($r['title'] ?? '');
+    $typeStyle = trip_format_type_style((string)($r['trip_type'] ?? ''), (string)($r['trip_style'] ?? ''));
+    if ($typeStyle !== '') $body[] = '形態：' . $typeStyle;
+    $leaderLine = 'リーダー：' . (string)($r['leader'] ?? '');
+    $peopleLine = trip_format_people(isset($r['people']) ? (int)$r['people'] : 0);
+    if ($peopleLine !== '') $leaderLine .= '　人数：' . $peopleLine;
+    $body[] = $leaderLine;
+    $body[] = '最終下山連絡時刻：' . (string)($r['final_contact_deadline'] ?? '');
+    $body[] = '';
+    $dc = trim((string)($r['descent_contact'] ?? ''));
+    if ($dc !== '') {
+        $body[] = $dc . 'さん、下山受けをよろしくお願いします。';
+        $body[] = '';
+    }
+    $body[] = '山びこ山行管理一覧表リンク';
+    $body[] = trip_planlist_url((string)($r['date_ymd'] ?? ''));
+    return [
+        'to' => (string)TRIP_NOTIFY_SUBMIT_TO,
+        'subject' => '山行計画提出と下山連絡依頼',
+        'body' => implode("\n", $body),
+    ];
+}
 
 // 追加：LINE送信のHTTPステータス（直近）を画面側で判別するため
 function line_last_http(): int { return (int)($GLOBALS['LINE_LAST_HTTP'] ?? 0); }
