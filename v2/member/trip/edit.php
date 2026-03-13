@@ -74,20 +74,20 @@ function trip_format_people(?int $people): string {
 }
 
 function trip_mail_headers(): string {
-    $headers = [
-        'MIME-Version: 1.0',
-        'Content-Type: text/plain; charset=UTF-8',
-        'Content-Transfer-Encoding: 8bit',
-    ];
     $from = trim((string)TRIP_NOTIFY_FROM);
-    if ($from !== '') {
-        $fromName = trim((string)TRIP_NOTIFY_FROM_NAME);
-        if ($fromName !== '') {
-            $headers[] = 'From: ' . mb_encode_mimeheader($fromName, 'UTF-8') . ' <' . $from . '>';
-        } else {
-            $headers[] = 'From: ' . $from;
-        }
+    $fromName = trim((string)TRIP_NOTIFY_FROM_NAME);
+    if ($from === '') $from = 'info@satubiko.com';
+
+    $headers = [];
+    $headers[] = 'MIME-Version: 1.0';
+    if ($fromName !== '') {
+        $headers[] = 'From: ' . mb_encode_mimeheader($fromName, 'ISO-2022-JP-MS') . ' <' . $from . '>';
+    } else {
+        $headers[] = 'From: ' . $from;
     }
+    $headers[] = 'Reply-To: ' . $from;
+    $headers[] = 'Content-Type: text/plain; charset=ISO-2022-JP';
+    $headers[] = 'Content-Transfer-Encoding: 7bit';
     return implode("\r\n", $headers);
 }
 
@@ -601,42 +601,49 @@ $already = trim((string)($r['submit_notified_at'] ?? '')) !== '';
                     if ($already && !$confirmResend) {
                         $error = 'この計画書提出通知は既に送信済みです。再送する場合は確認のうえ実行してください。';
                     } else {
-                        require_once __DIR__ . '/line_notify.php';
-
-                        $date = (string)$r['date_ymd'];
-                        $date_to = (string)($r['date_to'] ?? '');
-                        $days = $date;
-                        if ($date_to !== '' && $date_to !== $date) $days .= '～' . $date_to;
-
-                        $typeLine = (string)($r['trip_type'] ?? '');
-                        $trip_style = (string)($r['trip_style'] ?? '');
-                        if ($trip_style !== '') $typeLine .= '　形態：' . $trip_style;
-
-                        $lines = [];
-                        $lines[] = '以下の山行について計画書を提出します。';
-                        $lines[] = '下山連絡受けをよろしくお願いします。';
-                        $lines[] = '日程：' . $days;
-                        $lines[] = '山名：' . (string)$r['title'];
-                        if ($typeLine !== '') $lines[] = '種別：' . $typeLine;
-                        $lines[] = 'リーダー：' . (string)$r['leader'];
-                        $lines[] = '下山受け：' . (string)$r['descent_contact'];
-                        $lines[] = '最終下山連絡時刻：' . (string)$r['final_contact_deadline'];
-
                         $ok = false;
-                        if (defined('LINE_SUBMIT_GROUP_ID') && LINE_SUBMIT_GROUP_ID !== '') {
-                            $k = make_line_key((int)$id, (string)$date);
-                            $ackData = http_build_query(['action'=>'descent_ack','id'=>(int)$id,'k'=>$k], '', '&');
-                            $ok = line_push_flex_postback(
-                              LINE_SUBMIT_GROUP_ID,
-                                '計画書提出',
-                                '【計画書提出】',
-                                $lines,
-                                '下山連絡受け 承知',
-                                $ackData
-                            );
+                        $method = trip_notify_method();
+
+                        if ($method === 'line') {
+                            require_once __DIR__ . '/line_notify.php';
+
+                            $date = (string)$r['date_ymd'];
+                            $date_to = (string)($r['date_to'] ?? '');
+                            $days = $date;
+                            if ($date_to !== '' && $date_to !== $date) $days .= '～' . $date_to;
+
+                            $typeLine = (string)($r['trip_type'] ?? '');
+                            $trip_style = (string)($r['trip_style'] ?? '');
+                            if ($trip_style !== '') $typeLine .= '　形態：' . $trip_style;
+
+                            $lines = [];
+                            $lines[] = '以下の山行について計画書を提出します。';
+                            $lines[] = '下山連絡受けをよろしくお願いします。';
+                            $lines[] = '日程：' . $days;
+                            $lines[] = '山名：' . (string)$r['title'];
+                            if ($typeLine !== '') $lines[] = '種別：' . $typeLine;
+                            $lines[] = 'リーダー：' . (string)$r['leader'];
+                            $lines[] = '下山受け：' . (string)$r['descent_contact'];
+                            $lines[] = '最終下山連絡時刻：' . (string)$r['final_contact_deadline'];
+
+                            if (defined('LINE_SUBMIT_GROUP_ID') && LINE_SUBMIT_GROUP_ID !== '') {
+                                $k = make_line_key((int)$id, (string)$date);
+                                $ackData = http_build_query(['action'=>'descent_ack','id'=>(int)$id,'k'=>$k], '', '&');
+                                $ok = line_push_flex_postback(
+                                  LINE_SUBMIT_GROUP_ID,
+                                    '計画書提出',
+                                    '【計画書提出】',
+                                    $lines,
+                                    '下山連絡受け 承知',
+                                    $ackData
+                                );
+                            }
+                        } else {
+                            $mail = build_submit_mail($r);
+                            $ok = trip_send_mail((string)$mail['to'], (string)$mail['subject'], (string)$mail['body']);
                         }
 
-                        // ボタン操作で状態を提出へ揃える（LINE送信成否に関わらず）
+                        // ボタン操作で状態を提出へ揃える（通知送信成否に関わらず）
                         $now = date('Y-m-d H:i:s');
                         $pdo->prepare("UPDATE trips SET status='PLAN_SUBMITTED', updated_at=:u WHERE id=:id")
                             ->execute([':u'=>$now, ':id'=>$id]);
@@ -645,23 +652,29 @@ $already = trim((string)($r['submit_notified_at'] ?? '')) !== '';
                             // 送信済みフラグ更新
                             $pdo->prepare("UPDATE trips SET submit_notified_at=:t, updated_at=:u WHERE id=:id")
                                 ->execute([':t'=>$now, ':u'=>$now, ':id'=>$id]);
-                            $info = '管理状態を提出に更新し、LINE通知しました。';
+                            $info = ($method === 'line')
+                                ? '管理状態を提出に更新し、LINE通知しました。'
+                                : '管理状態を提出に更新し、メール通知しました。';
                             $info_type = 'ok';
                             $row = load_trip($pdo, (int)$id) ?: $row;
                             $action = '';
                             trip_event_log($beforeRow, $row, 'submit_notify', '提出');
                             // 画面表示へ（一覧へ戻らない）
                         } else {
-                            // 状態は提出へ更新済み。LINEは失敗。
+                            // 状態は提出へ更新済み。通知は失敗。
                             $row = load_trip($pdo, (int)$id) ?: $row;
-                        
-                            $http = line_last_http();
-                            $info = '管理状態を提出に更新しましたが、LINE通知に失敗しました。' . ($http===429 ? '（送信上限超過:429）' : '');
+
+                            if ($method === 'line') {
+                                $http = line_last_http();
+                                $info = '管理状態を提出に更新しましたが、LINE通知に失敗しました。' . ($http===429 ? '（送信上限超過:429）' : '');
+                                @file_put_contents(__DIR__ . '/line_notify.log', date('Y-m-d H:i:s') . " SUBMIT_NOTIFY_FAIL id=" . $id . "\n", FILE_APPEND);
+                            } else {
+                                $info = '管理状態を提出に更新しましたが、メール通知に失敗しました。';
+                            }
                             $info_type = 'warn';
                             $error = '';
                             // 状態更新は完了しているためログに残す
                             trip_event_log($beforeRow, $row, 'submit_notify', '提出');
-                            @file_put_contents(__DIR__ . '/line_notify.log', date('Y-m-d H:i:s') . " SUBMIT_NOTIFY_FAIL id=" . $id . "\n", FILE_APPEND);
                         }
                     }
                 }
