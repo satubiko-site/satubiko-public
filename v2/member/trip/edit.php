@@ -261,6 +261,14 @@ function list_plan_files(string $dateYmd): array {
     return $files;
 }
 
+function plan_path_exists_in_list(string $planPath, array $planFiles): bool {
+    if ($planPath === '') return true;
+    foreach ($planFiles as $pf) {
+        if ((string)($pf['value'] ?? '') === $planPath) return true;
+    }
+    return false;
+}
+
 $mode = get_param('mode', '');
 $backY = (int)get_param('back_y', date('Y'));
 $backM = (int)get_param('back_m', date('n'));
@@ -405,7 +413,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([':id' => $id]);
             trip_event_log($beforeRow, null, 'delete', '削除');
             
-            $info = '山行一覧表から山行計画を削除しました';
+            $info = '山行管理表から山行計画を削除しました';
             $info_type = 'ok';
             // 削除後は新規入力状態に戻す（画面は残す）
             $row = [
@@ -670,7 +678,6 @@ $already = trim((string)($r['safety_notified_at'] ?? '')) !== '';
                 if (trim((string)($r['title'] ?? '')) === '') $miss[] = '山行名';
                 if (trim((string)($r['date_ymd'] ?? '')) === '') $miss[] = '期間From';
                 if (trim((string)($r['leader'] ?? '')) === '') $miss[] = 'リーダー';
-                if (trim((string)($r['plan_path'] ?? '')) === '') $miss[] = '計画書';
                 if (!empty($miss)) {
                     $error = '募集通知に必要な情報が不足しています: ' . implode('、', $miss);
                 } else {
@@ -830,6 +837,24 @@ $already = trim((string)($r['recruit_notified_at'] ?? '')) !== '';
         // close_complete の場合、保存処理へ進まない
     }
 
+    // 追加：中止（状態を中止に更新）
+    if ($action === 'cancel_complete') {
+        require_once __DIR__ . '/line_config.php';
+        if ($id <= 0) {
+            $error = '中止は、いったん保存してから実行してください。';
+        } else {
+            $now = date('Y-m-d H:i:s');
+            $pdo->prepare("UPDATE trips SET status='CANCELLED', descended_at=:u, updated_at=:u WHERE id=:id")
+                ->execute([':u'=>$now, ':id'=>$id]);
+            $info = '管理状態を中止としました';
+            $info_type = 'ok';
+            $row = load_trip($pdo, (int)$id) ?: $row;
+            trip_event_log($beforeRow, $row, 'cancel_complete', '中止');
+            $action = '';
+        }
+        // cancel_complete の場合、保存処理へ進まない
+    }
+
 // save
     if ($action === 'save') {
     $date = get_param('date_ymd', '');
@@ -854,7 +879,7 @@ $already = trim((string)($r['recruit_notified_at'] ?? '')) !== '';
     if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
         $error = '日付が不正です（YYYY-MM-DD）。';
     } elseif ($title === '') {
-        $error = '山行名（山名）が空です。';
+        $error = '山行名（山域名）が指定されていません。';
     } else {
         $now = date('Y-m-d H:i:s');
         // 追加：状態変化検知（精査通知用）
@@ -1137,25 +1162,37 @@ INSERT INTO trips(
 
 
 } else {
-    if ($mode === 'edit') {
-        $id = (int)get_param('id', '0');
-        $stmt = $pdo->prepare("SELECT * FROM trips WHERE id=:id");
-        $stmt->execute([':id'=>$id]);
-        $r = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$r) {
-            $error = '対象データが見つかりません。';
-        } else {
-            $row = $r;
-            // 追加：保存時confirm用（現状値を保持）
-            $prevStatus = (string)($row['status'] ?? '');
-            $prevSafetyNotified = (string)($row['safety_notified_at'] ?? '');
-            $prevSubmitNotified = (string)($row['submit_notified_at'] ?? '');
-        if (!isset($row['date_to']) || $row['date_to'] === '') { $row['date_to'] = $row['date_ymd']; }
-        // 追加：最終下山連絡時刻の初期値（下山日=期間To の 22:00）
-        if (!isset($row['final_contact_deadline']) || trim((string)$row['final_contact_deadline']) === '') {
-            $row['final_contact_deadline'] = $row['date_to'] . ' 22:00';
+  if ($mode === 'edit') {
+    $id = (int)get_param('id', '0');
+    $stmt = $pdo->prepare("SELECT * FROM trips WHERE id=:id");
+    $stmt->execute([':id'=>$id]);
+    $r = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$r) {
+        $error = '対象データが見つかりません。';
+    } else {
+        $row = $r;
+
+        // 追加：選択済み計画書が実フォルダに存在しない場合は plan_path を空にする
+        $currentPlanFiles = list_plan_files((string)$row['date_ymd']);
+        if (!plan_path_exists_in_list((string)($row['plan_path'] ?? ''), $currentPlanFiles)) {
+            $pdo->prepare("UPDATE trips SET plan_path='', updated_at=:u WHERE id=:id")
+                ->execute([
+                    ':u'  => date('Y-m-d H:i:s'),
+                    ':id' => $id,
+                ]);
+            $row['plan_path'] = '';
         }
-        }
+
+        // 追加：保存時confirm用（現状値を保持）
+        $prevStatus = (string)($row['status'] ?? '');
+        $prevSafetyNotified = (string)($row['safety_notified_at'] ?? '');
+        $prevSubmitNotified = (string)($row['submit_notified_at'] ?? '');
+      if (!isset($row['date_to']) || $row['date_to'] === '') { $row['date_to'] = $row['date_ymd']; }
+      // 追加：最終下山連絡時刻の初期値（下山日=期間To の 22:00）
+      if (!isset($row['final_contact_deadline']) || trim((string)$row['final_contact_deadline']) === '') {
+          $row['final_contact_deadline'] = $row['date_to'] . ' 22:00';
+      }
+      }
     } else {
         $date = get_param('date', '');
         if ($date === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $date)) {
@@ -1179,20 +1216,32 @@ $statusOptions = [
     'PLAN_SUBMITTED' => '提出',
     'APPROVED'       => '精査',
     'DESCENDED'      => '下山',
+    'CANCELLED'      => '中止',
     'CLOSED'         => '完了',
 ];
 
 // 7) 画面表示用：候補ファイル一覧（現在の日付から）
 $planFiles = list_plan_files((string)$row['date_ymd']);
 
+
+// 追加：ボタン操作後、メッセージ表示の後に一覧へ戻す（成功時）
+$redirect_url = '';
+$redirect_delay_ms = 1200; // 1.2秒（必要なら変更）
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === '' && $info !== '') {
+    $redirect_url = 'planlist.php?y=' . $backY . '&m=' . $backM;
+}
+
+
+// ★追加：項目区分が山行計画かどうか（イベント/その他はボタン非表示に使う）
+$isPlanCategory = ((string)$row['category'] === '山行計画');
 ?><!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>山行計画入力/修正</title>
+<title>山行管理表の登録/修正</title>
 <style>
   body{font-family:system-ui,-apple-system,"Segoe UI",Meiryo,sans-serif; margin:12px; color:#111;}
-  .title{font-size:130%; font-weight:600; text-align:center;}
+  .title{font-size:140%; font-weight:600; text-align:center;}
   .bar{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
   .bar a{text-decoration:none;}  .err{color:#c00; margin:8px 0; white-space:pre-wrap;}
   .msg{margin:8px 0; white-space:pre-wrap; padding:8px 10px; border-radius:6px;}
@@ -1201,19 +1250,20 @@ $planFiles = list_plan_files((string)$row['date_ymd']);
   .msg[data-type="error"]{background:#ffe7e7; color:#844; border:1px solid #f1b2b2;}
   label{display:block; margin-top:10px; font-weight:600;}
   input[type=text], textarea, select{width:100%; box-sizing:border-box; padding:6px 8px; font-size:14px;}
+  input[type=text-half] {width:50%; box-sizing:border-box; padding:6px 8px; font-size:14px;}
   input[type=number] {width:20%; box-sizing:border-box; padding:6px 8px; font-size:14px;}
   textarea{min-height:80px;}
   .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
   .btns{margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
   button{padding:8px 14px; font-size:14px;}
-  .danger{border:1px solid #c00; color:#c00; background:#fff;}
+  .danger{min-width:84px;background:#ef4444; color:#fff;font-weight:800;border:1px solid #c00;border-radius:8px;}
+  .ghost{background:transparent; color:#111827; border:1px solid #ccc;}
   .hint{font-size:12px; color:#444; margin-top:4px;}
 
 /* === 基本ボタン（主要フロー） === */
 button.primary-btn{
-  min-width:100px;
+  min-width:80px;
   padding:6px 16px;
-  font-weight:800;
   border:2px solid #2563eb;
   background:linear-gradient(#ffffff,#e8f0ff);
   color:#1e40af;
@@ -1234,12 +1284,14 @@ button.secondary-btn{
   border-radius:8px;
 }
 
+
+  /* ★追加：イベント/その他の場合は山行計画用ボタンを非表示 */
+  body[data-isplan="0"] [data-planonly="1"]{display:none !important;}
 </style>
 </head>
-<body>
-
+<body data-isplan="<?php echo ($isPlanCategory?'1':'0'); ?>">
 <div class="bar">
-  <div class="title">山行一覧表の入力/修正</div>
+  <div class="title">山行管理表の登録/修正</div>
   <div><a href="planlist.php?y=<?php echo $backY; ?>&m=<?php echo $backM; ?>">一覧へ戻る</a></div>
 </div>
 
@@ -1256,122 +1308,123 @@ button.secondary-btn{
   <input type="hidden" id="safetyNotifiedAtVal" value="<?php echo h((string)($row['safety_notified_at'] ?? '')); ?>">
   <input type="hidden" id="recruitNotifiedAtVal" value="<?php echo h((string)($row['recruit_notified_at'] ?? '')); ?>">
 
-
   <div class="row2">
-    <div>
-      <label>期間 From（YYYY-MM-DD）</label>
-      <input type="text" name="date_ymd" value="<?php echo h((string)$row['date_ymd']); ?>">
-    </div>
-    <div>
-      <label>期間 To（YYYY-MM-DD）</label>
-      <input type="text" name="date_to" value="<?php echo h((string)$row['date_to']); ?>">
-    </div>
+  <div>
+    <label>項目区分</label>
+    <select name="category">
+      <?php foreach ($categoryOptions as $opt): ?>
+        <option value="<?php echo h($opt); ?>" <?php echo ($row['category']===$opt?'selected':''); ?>><?php echo h($opt); ?></option>
+      <?php endforeach; ?>
+    </select>
   </div>
-  <label>山行名（山名）</label>
-  <input type="text" name="title" value="<?php echo h((string)$row['title']); ?>">
-
-  <div class="row2">
-    <div>
-      <label>項目区分</label>
-      <select name="category">
-        <?php foreach ($categoryOptions as $opt): ?>
-          <option value="<?php echo h($opt); ?>" <?php echo ($row['category']===$opt?'selected':''); ?>><?php echo h($opt); ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
-    <div>
-      <label>管理状態</label>
-      <select name="status">
-        <?php foreach ($statusOptions as $k=>$label): ?>
-          <option value="<?php echo h($k); ?>" <?php echo ($row['status']===$k?'selected':''); ?>><?php echo h($label); ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
+  <div>
+    <label>管理状態</label>
+    <select name="status">
+      <?php foreach ($statusOptions as $k=>$label): ?>
+        <option value="<?php echo h($k); ?>" <?php echo ($row['status']===$k?'selected':''); ?>><?php echo h($label); ?></option>
+      <?php endforeach; ?>
+    </select>
   </div>
-
-  <div class="row2">
-    <div>
-      <label>山行種別</label>
-      <select name="trip_type">
-        <option value="">（未設定）</option>
-        <?php foreach ($typeOptions as $opt): ?>
-          <option value="<?php echo h($opt); ?>" <?php echo ($row['trip_type']===$opt?'selected':''); ?>><?php echo h($opt); ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
-    <div>
-      <label>山行形態</label>
-      <select name="trip_style">
-        <option value="">（未設定）</option>
-        <?php foreach ($styleOptions as $opt): ?>
-          <option value="<?php echo h($opt); ?>" <?php echo ($row['trip_style']===$opt?'selected':''); ?>><?php echo h($opt); ?></option>
-        <?php endforeach; ?>
-      </select>
-    </div>
-  </div>
-
-  <div class="row2">
-    <div>
-      <label>リーダー</label>
-      <input type="text" name="leader" value="<?php echo h((string)$row['leader']); ?>">
-    </div>
-    <div>
-      <label>下山受担当</label>
-      <input type="text" name="descent_contact" value="<?php echo h((string)$row['descent_contact']); ?>">
-    
-      <div style="margin-top:6px;font-size:13px;">
-        <label style="display:inline;font-weight:400;">
-          <input type="checkbox" name="descent_ack" value="1" <?php echo ((int)($row['descent_ack'] ?? 0)===1?'checked':''); ?>> 下山受け了承
-        </label>
-      </div>
 </div>
-    <div>
-      <label>下山連絡最終時刻（手入力）</label>
-      <input type="text" name="final_contact_deadline" placeholder="YYYY-MM-DD HH:MM" value="<?php echo h((string)$row['final_contact_deadline']); ?>">
-      <div style="font-size:12px;color:#555;margin-top:2px;">例：2026-02-14 18:00（最終時刻を過ぎると一覧でアラーム表示）</div>
+
+<!-- 計画書 -->
+<label>計画書（共有書庫の該当月フォルダから選択）</label>
+<select name="plan_path" id="planPathSelect">
+  <option value="">（選択していない）</option>
+  <?php foreach ($planFiles as $pf): ?>
+    <option value="<?php echo h($pf['value']); ?>" <?php echo ($row['plan_path']===$pf['value']?'selected':''); ?>>
+      <?php echo h($pf['label']); ?>
+    </option>
+  <?php endforeach; ?>
+</select>
+
+<!-- 取り込み -->
+<div style="margin-top:6px;<?php echo ($row['plan_path']==='' ? 'display:none;' : ''); ?>" id="importPlanWrap">
+  <button class="secondary-btn" type="button" id="importPlanBtn" data-planonly="1">計画書から取り込み</button>
+  <span style="font-size:12px;color:#555;margin-left:6px;">※選択した計画書（Excel）から各項目を画面に取り込みます。（保存はしません）</span>
+</div>
+
+<div class="row2">
+  <div>
+    <label>期間 From（YYYY-MM-DD）</label>
+    <input type="text" name="date_ymd" value="<?php echo h((string)$row['date_ymd']); ?>">
+  </div>
+  <div>
+    <label>期間 To（YYYY-MM-DD）</label>
+    <input type="text" name="date_to" value="<?php echo h((string)$row['date_to']); ?>">
+  </div>
+</div>
+
+<label>山行名（山域名）</label>
+<input type="text" name="title" value="<?php echo h((string)$row['title']); ?>">
+
+<div class="row2">
+  <div>
+    <label>山行形態</label>
+    <select name="trip_type">
+      <option value="">（未設定）</option>
+      <?php foreach ($typeOptions as $opt): ?>
+        <option value="<?php echo h($opt); ?>" <?php echo ($row['trip_type']===$opt?'selected':''); ?>><?php echo h($opt); ?></option>
+      <?php endforeach; ?>
+    </select>
+  </div>
+  <div>
+    <label>登山形態</label>
+    <select name="trip_style">
+      <option value="">（未設定）</option>
+      <?php foreach ($styleOptions as $opt): ?>
+        <option value="<?php echo h($opt); ?>" <?php echo ($row['trip_style']===$opt?'selected':''); ?>><?php echo h($opt); ?></option>
+      <?php endforeach; ?>
+    </select>
+  </div>
+</div>
+
+<label>リーダー</label>
+<input type="text-half" name="leader" value="<?php echo h((string)$row['leader']); ?>">
+
+<label>メンバー（”、”で区切る）</label>
+<input type="text" name="members" value="<?php echo h((string)$row['members']); ?>">
+
+<label>人数（数字）</label>
+<input type="number" name="people" min="1" step="1" value="<?php echo h((string)($row['people'] ?? '')); ?>">
+
+<div class="row2">
+  <div>
+    <label>下山連絡最終時刻（YYYY-MM-DD HH:MM）</label>
+    <input type="text" name="final_contact_deadline" placeholder="YYYY-MM-DD HH:MM" value="<?php echo h((string)$row['final_contact_deadline']); ?>">
+    <div style="font-size:12px;color:#555;margin-top:2px;">例：2026-02-14 18:00（最終時刻を過ぎると一覧でアラーム表示）</div>
+  </div>
+  <div>
+    <label>下山受担当</label>
+    <input type="text" name="descent_contact" value="<?php echo h((string)$row['descent_contact']); ?>">
+
+    <div style="margin-top:6px;font-size:13px;">
+      <label style="display:inline;font-weight:400;">
+        <input type="checkbox" name="descent_ack" value="1" <?php echo ((int)($row['descent_ack'] ?? 0)===1?'checked':''); ?>> 下山受け了承
+      </label>
     </div>
   </div>
+</div>
 
-  <label>メンバー（自由記述）</label>
-  <input type="text" name="members" value="<?php echo h((string)$row['members']); ?>">
+<label>メモ（自由記述）</label>
+<textarea name="note"><?php echo h((string)$row['note']); ?></textarea>
 
-  <label>人数（数字）</label>
-  <input type="number" name="people" min="1" step="1" value="<?php echo h((string)($row['people'] ?? '')); ?>">
-
-  <!-- 計画書：select が保存対象 -->
-  <label>計画書（該当月から選択）</label>
-  <select name="plan_path" id="planPathSelect">
-    <option value="">（選択しない）</option>
-    <?php foreach ($planFiles as $pf): ?>
-      <option value="<?php echo h($pf['value']); ?>" <?php echo ($row['plan_path']===$pf['value']?'selected':''); ?>>
-        <?php echo h($pf['label']); ?>
-      </option>
-    <?php endforeach; ?>
-  </select>
-
-  <div style="margin-top:6px;">
-    <button class="secondary-btn" type="button" id="importPlanBtn">計画書から取り込み</button>
-    <span style="font-size:12px;color:#555;margin-left:6px;">※選択中の計画書（Excel）から山名・日程・種別/形態・リーダー・メンバー・下山受け・最終連絡時刻をフォームに反映します（保存はしません）</span>
-  </div>
-
-  <label>メモ（自由記述）</label>
-  <textarea name="note"><?php echo h((string)$row['note']); ?></textarea>
-
-  <div class="btns">
-    <button class="primary-btn" type="submit">保存</button>
-    <button class="secondary-btn" type="button" id="recruitNotifyBtn">募集</button>
-    <button class="secondary-btn" type="button" id="recruitEndBtn">募集終了</button>
-    <button class="primary-btn" type="button" id="submitNotifyBtn">提出</button>
-    <button class="secondary-btn" type="button" id="safetyNotifyBtn">精査</button>
-    <button class="secondary-btn" type="button" id="safetyEndBtn">精査終了</button>
-    <button class="primary-btn" type="button" id="descendCompleteBtn">下山完了</button>
-    <button class="primary-btn" type="button" id="closeBtn">終了</button>
-    <a href="planlist.php?y=<?php echo $backY; ?>&m=<?php echo $backM; ?>">一覧に戻る</a>
-
-    <?php if ((int)$row['id'] > 0): ?>
-      <button type="button" class="danger" id="deleteBtn">計画抹消</button>
-    <?php endif; ?>
-  </div>
+<div class="btns">
+  <button class="primary-btn" type="submit">保存</button>
+  <button class="secondary-btn" type="button" id="recruitNotifyBtn" data-planonly="1">募集</button>
+  <button class="secondary-btn" type="button" id="recruitEndBtn" data-planonly="1">募集終了</button>
+  <button class="primary-btn" type="button" id="submitNotifyBtn" data-planonly="1">提出</button>
+<!--  <button class="secondary-btn" type="button" id="safetyNotifyBtn">精査</button>
+  <button class="secondary-btn" type="button" id="safetyEndBtn">精査終了</button>
+  -->
+  <button class="primary-btn" type="button" id="descendCompleteBtn" data-planonly="1">下山完了</button>
+  <button class="primary-btn" type="button" id="cancelCompleteBtn" data-planonly="1">中止</button>
+  <button class="primary-btn" type="button" id="closeBtn" data-planonly="1">終了</button>
+  <?php if ((int)$row['id'] > 0): ?>
+    <button type="button" class="danger" id="deleteBtn">計画抹消</button>
+  <?php endif; ?>
+  <a href="planlist.php?y=<?php echo $backY; ?>&m=<?php echo $backM; ?>">一覧に戻る</a>
+</div>
   <?php
     // 表示メッセージ（エラー優先）
     $msg_text = ($error !== '') ? $error : $info;
@@ -1382,9 +1435,30 @@ button.secondary-btn{
 </form>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+  (function(){
+    var sel = document.getElementById('planPathSelect');
+    var wrap = document.getElementById('importPlanWrap');
+    if (!sel || !wrap) return;
 
+    function updateImportPlanVisibility() {
+      wrap.style.display = sel.value ? '' : 'none';
+    }
+
+    sel.addEventListener('change', updateImportPlanVisibility);
+    updateImportPlanVisibility();
+  })();
+  </script>
 <script>
 (function(){
+
+
+  // 追加：サーバー側で操作完了メッセージが出た場合、少し間を置いて一覧へ戻す
+  var __redirectUrl = <?php echo json_encode($redirect_url, JSON_UNESCAPED_SLASHES); ?>;
+  var __redirectDelay = <?php echo (int)$redirect_delay_ms; ?>;
+  if (__redirectUrl) {
+    setTimeout(function(){ location.href = __redirectUrl; }, __redirectDelay);
+  }
 
   function showInlineMsg(type, text){
     var box = document.getElementById('actionMsg');
@@ -1472,6 +1546,17 @@ button.secondary-btn{
 
   // 追加：保存時にLINE送信の確認（方式A）
   var form = document.getElementById('tripForm');
+  // ★追加：項目区分に応じてボタン表示を切り替え（イベント/その他は山行計画用ボタンを非表示）
+  (function(){
+    var catSel = (form && form.elements['category']) ? form.elements['category'] : null;
+    if (!catSel) return;
+    function applyPlanButtons(){
+      var isPlan = (catSel.value === '山行計画');
+      document.body.setAttribute('data-isplan', isPlan ? '1' : '0');
+    }
+    catSel.addEventListener('change', applyPlanButtons);
+    applyPlanButtons();
+  })();
   // 追加：未保存変更の検出（通知ボタンは保存後のみ）
   var dirty = false;
   if (form) {
@@ -1483,7 +1568,7 @@ button.secondary-btn{
     if (!form) return;
 
     if (dirty) {
-      showInlineMsg('warn', '保存されていない入力があります。先に［保存］してから、もう一度お試しください。');
+      showInlineMsg('warn', '保存されていません、先に［保存］してから、もう一度お試しください。');
       return;
     }
 
@@ -1539,33 +1624,41 @@ button.secondary-btn{
   }
 
 
-  // 提出通知
-  var btnSubmit = document.getElementById('submitNotifyBtn');
-  if (btnSubmit) {
-    btnSubmit.addEventListener('click', function(){
-      clearInlineMsg();
-      window.__confirmAnchor = this;
-      doNotifyAction('submit_notify', 'submitNotifiedAtVal', 'confirmResendField', 'この計画書提出通知は既に送信済みです。もう一度送りますか？', '同時にLINEに【提出】を通知しますか？');
-    });
-  }
-  // 精査通知
-  var btnSafety = document.getElementById('safetyNotifyBtn');
-  if (btnSafety) {
-    btnSafety.addEventListener('click', function(){
-      clearInlineMsg();
-      window.__confirmAnchor = this;
-      doNotifyAction('safety_notify', 'safetyNotifiedAtVal', 'confirmResendSafetyField', 'この精査通知は既に送信済みです。もう一度送りますか？', '同時にLINEに【精査】を通知しますか？');
-    });
-  }
-  // 募集通知
-  var btnRecruit = document.getElementById('recruitNotifyBtn');
-  if (btnRecruit) {
-    btnRecruit.addEventListener('click', function(){
-      clearInlineMsg();
-      window.__confirmAnchor = this;
-      doNotifyAction('recruit_notify', 'recruitNotifiedAtVal', 'confirmResendRecruitField', 'この募集通知は既に送信済みです。もう一度送りますか？', '同時にLINEに【参加募集】を通知しますか？');
-    });
-  }
+// 提出通知
+var btnSubmit = document.getElementById('submitNotifyBtn');
+if (btnSubmit) {
+  btnSubmit.addEventListener('click', function(){
+    clearInlineMsg();
+
+    // ★追加：提出は計画書が必須。確認ダイアログ（LINE送信確認）の前にチェックして止める
+    var cat = (form && form.elements['category'] ? form.elements['category'].value : '');
+    var sel = document.getElementById('planPathSelect');
+    var planVal = (sel ? String(sel.value || '').trim() : '');
+    if (cat === '山行計画' && planVal === '') {
+      showInlineMsg('warn', '提出は計画書の添付が必要です。計画書を選択してください。');
+      return;
+    }
+
+    window.__confirmAnchor = this;
+    doNotifyAction('submit_notify', 'submitNotifiedAtVal', 'confirmResendField',
+      'この計画書提出通知は既に送信済みです。もう一度送りますか？',
+      '同時にLINEに【提出】を通知しますか？'
+    );
+  });
+}
+
+// 募集通知
+var btnRecruit = document.getElementById('recruitNotifyBtn');
+if (btnRecruit) {
+  btnRecruit.addEventListener('click', function(){
+    clearInlineMsg();
+    window.__confirmAnchor = this;
+    doNotifyAction('recruit_notify', 'recruitNotifiedAtVal', 'confirmResendRecruitField',
+      'この募集通知は既に送信済みです。もう一度送りますか？',
+      '同時にLINEに【参加募集】を通知しますか？'
+    );
+  });
+}
 
   if (form) {
     form.addEventListener('submit', function(){
@@ -1611,7 +1704,7 @@ button.secondary-btn{
     btnRecruitEnd.addEventListener('click', function(){
       clearInlineMsg();
       if (dirty) {
-        showInlineMsg('warn', '保存されていない入力があります。先に［保存］してから、もう一度お試しください。');
+        showInlineMsg('warn', '保存されていません、先に［保存］してから、もう一度お試しください。');
         return;
       }
       var act = document.getElementById('actionField');
@@ -1626,7 +1719,7 @@ button.secondary-btn{
     btnSafetyEnd.addEventListener('click', function(){
       clearInlineMsg();
       if (dirty) {
-        showInlineMsg('warn', '保存されていない入力があります。先に［保存］してから、もう一度お試しください。');
+        showInlineMsg('warn', '保存されていません、先に［保存］してから、もう一度お試しください。');
         return;
       }
       var act = document.getElementById('actionField');
@@ -1641,11 +1734,26 @@ button.secondary-btn{
     btnDescend.addEventListener('click', function(){
       clearInlineMsg();
       if (dirty) {
-        showInlineMsg('warn', '保存されていない入力があります。先に［保存］してから、もう一度お試しください。');
+        showInlineMsg('warn', '保存されていません、先に［保存］してから、もう一度お試しください。');
         return;
       }
       var act = document.getElementById('actionField');
       if (act) act.value = 'descend_complete';
+      form.submit();
+    });
+  }
+
+  // 中止（状態を中止へ）
+  var btnCancel = document.getElementById('cancelCompleteBtn');
+  if (btnCancel) {
+    btnCancel.addEventListener('click', function(){
+      clearInlineMsg();
+      if (dirty) {
+        showInlineMsg('warn', '保存されていません、先に［保存］してから、もう一度お試しください。');
+        return;
+      }
+      var act = document.getElementById('actionField');
+      if (act) act.value = 'cancel_complete';
       form.submit();
     });
   }
@@ -1656,7 +1764,7 @@ button.secondary-btn{
     btnClose.addEventListener('click', function(){
       clearInlineMsg();
       if (dirty) {
-        showInlineMsg('warn', '保存されていない入力があります。先に［保存］してから、もう一度お試しください。');
+        showInlineMsg('warn', '保存されていません、先に［保存］してから、もう一度お試しください。');
         return;
       }
       var act = document.getElementById('actionField');
@@ -1866,7 +1974,7 @@ button.secondary-btn{
         }
 
 
-        if (!sheetName) { alert('シートが見つかりませんでした。'); return; }
+        if (!sheetName) { alert('計画書のシートが見つかりませんでした。'); return; }
 
 
         var ws = wb.Sheets[sheetName];
@@ -1963,8 +2071,8 @@ button.secondary-btn{
 
         var title = cell('AG3'); // 山名（標準様式）
 
-        var tripType = cell('AG4'); // 山行種別（標準様式）
-        var tripStyle = cell('AG5'); // 山行形態（標準様式）
+        var tripType = cell('AG4'); // 山行形態（標準様式）
+        var tripStyle = cell('AG5'); // 登山形態（標準様式）
 
         // AG3 がラベル等の場合は、'山名' というセルの右側から拾う
         if (!title || title === '山行形態' || title === '山名') {
@@ -2123,6 +2231,21 @@ button.secondary-btn{
         // メンバー（全角、区切り）
         if (members.length && elMembers) elMembers.value = members.join('、');
 
+        // ★追加：人数（リーダー＋メンバー）を自動セット（自由記述のため完全一致しない場合あり）
+        var elPeople = document.querySelector('[name="people"]');
+        if (elPeople) {
+          var uniq = {};
+          var cnt = 0;
+          function addName(s){
+            s = norm(s);
+            if (!s) return;
+            if (!uniq[s]) { uniq[s] = 1; cnt++; }
+          }
+          for (var i=0; i<leaders.length; i++) addName(leaders[i]);
+          for (var i=0; i<members.length; i++) addName(members[i]);
+          if (cnt > 0) elPeople.value = String(cnt);
+        }
+
 
 
         // 日程
@@ -2223,7 +2346,30 @@ button.secondary-btn{
 
 })();
 </script>
+<script>
+function sendHeight(){
+  var h = Math.max(
+    document.body ? document.body.scrollHeight : 0,
+    document.body ? document.body.offsetHeight : 0,
+    document.documentElement ? document.documentElement.scrollHeight : 0,
+    document.documentElement ? document.documentElement.offsetHeight : 0
+  );
+  parent.postMessage({type:"resize", height:h}, "*");
+}
 
+function sendHeightLater(){
+  sendHeight();
+  setTimeout(sendHeight, 50);
+  setTimeout(sendHeight, 200);
+  setTimeout(sendHeight, 500);
+  setTimeout(sendHeight, 1000);
+}
+
+document.addEventListener("DOMContentLoaded", sendHeightLater);
+window.addEventListener("load", sendHeightLater);
+window.addEventListener("pageshow", sendHeightLater);
+window.addEventListener("resize", sendHeight);
+</script>
 
 <!-- 追加: confirm() がブラウザ設定で抑止される場合に備えた簡易ダイアログ -->
 <div id="confirmOverlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:9999;">

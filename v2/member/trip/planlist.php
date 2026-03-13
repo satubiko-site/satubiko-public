@@ -49,6 +49,11 @@ try {
     foreach($cols as $c){ if(isset($c['name']) && $c['name']==='alarm_notified_at'){ $hasAlarmN=true; break; } }
     if(!$hasAlarmN){ $pdo->exec("ALTER TABLE trips ADD COLUMN alarm_notified_at TEXT"); }
 
+    // 追加：updated_at カラムが無ければ追加（下山受け了承/下山確認の更新で使用）
+    $hasU=false;
+    foreach($cols as $c){ if(isset($c['name']) && $c['name']==='updated_at'){ $hasU=true; break; } }
+    if(!$hasU){ $pdo->exec("ALTER TABLE trips ADD COLUMN updated_at TEXT"); }
+
   }catch(Throwable $e){
     // 失敗しても致命ではないため握りつぶす
   }
@@ -58,6 +63,10 @@ try {
   $m=isset($_GET['m'])?(int)$_GET['m']:(int)date('n');
   if($y<2000||$y>2100)$y=(int)date('Y');
   if($m<1||$m>12)$m=(int)date('n');
+
+  // 機能スイッチ：下山受け了承（確認前段）を使うか（評価中は false 推奨）
+  $USE_DESCENT_ACK = false;
+
 
 
   // --- 下山受け了承／下山確認（一覧から） ---
@@ -190,7 +199,10 @@ try {
   $first=new DateTime(sprintf('%04d-%02d-01',$y,$m));
   $daysInMonth=(int)$first->format('t');
 
-  $start=ymd($y,$m,1);
+  
+  // 当日強調表示用
+  $todayYmd = date('Y-m-d');
+$start=ymd($y,$m,1);
   $end=ymd($y,$m,$daysInMonth);
 
   $hasRecruit = (bool)$pdo->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='trip_recruit_join'")->fetchColumn();
@@ -298,7 +310,7 @@ try {
   exit;
 }
 
-function status_badge(string $st):string{
+function status_badge(string $st, int $id, int $backY, int $backM):string{
   $map=[
     'PLANNING'=>'予定',
     'RECRUIT'=>'募集',
@@ -306,11 +318,12 @@ function status_badge(string $st):string{
     'CLIMBING'=>'登山中',
     'APPROVED'=>'精査',
     'DESCENDED'=>'下山',
+    'CANCELLED'=>'中止',
     'CLOSED'=>'終了',
   ];
     $label = $map[$st] ?? $st;
   $cls = 'st-'.preg_replace('/[^A-Z0-9_]/', '', $st);
-  return '<span class="badge '.$cls.'">'.h($label).'</span>';
+  return '<a class="stlink" href="edit.php?mode=edit&id='.(int)$id.'&back_y='.(int)$backY.'&back_m='.(int)$backM.'"><span class="badge '.$cls.'">'.h($label).'</span></a>';
 }
 
 
@@ -353,6 +366,10 @@ table{border-collapse:collapse;width:100%;}
 th,td{border:1px solid #ccc;padding:6px 8px;font-size:14px;vertical-align:top;}
 th{background:#f3f3f3;}
 .daycell{width:50px;text-align:center;}
+
+/* 当日セルの強調（色はCSS変数で調整） */
+:root{--today-bg:#fff7dd;--today-border:#f0c000;--today-row-bg:rgba(255,247,196,0.55);}
+.daycell.today{background:var(--today-row-bg);box-shadow:inset 0 0 0 0px var(--today-border);}
 .w-sun{color:#c00;}
 .w-sat{color:#06c;}
 
@@ -364,14 +381,17 @@ th{background:#f3f3f3;}
 .note{font-size:12px;color:#444;margin-top:2px;white-space:pre-wrap;}
 
 .badge{border:1px solid #666;border-radius:999px;padding:1px 6px;font-size:12px;background:#fff;}
+.stlink{text-decoration:none;color:inherit;}
 
 /* 状態ごとの色分け（バッジ） */
 .badge.st-PLANNING{background:#f5f5f5;border-color:#888;}
 .badge.st-RECRUIT{background:#dbeafe;border-color:#2563eb; font-weight:700;}
-.badge.st-PLAN_SUBMITTED{background:#f3f0ff;border-color:#6b46c1;}
+.badge.st-PLAN_SUBMITTED{background:#fffbe6;border-color:#b7791f;}
 .badge.st-APPROVED{background:#fff3e0;border-color:#d97706;}
-.badge.st-DESCENDED{background:#fffbe6;border-color:#b7791f;}
-.badge.st-CLOSED{background:#e8fff0;border-color:#2f855a;}
+.badge.st-CLIMBING{background:#F0E68C;border-color:#b7791f;}
+.badge.st-DESCENDED{background:#e8fff0;border-color:#2f855a;}
+.badge.st-CANCELLED{background:#fdecec;border-color:#c53030;color:#a61b1b;}
+.badge.st-CLOSED{background:#f0f0f0;border-color:#888;}
 .badge.st-CAT{background:#f0f0f0;border-color:#888;}
 
 /* アラーム（最終連絡超過）: 行の背景と強調 */
@@ -436,6 +456,9 @@ button.ackbtn:disabled{
 .ack-ok{color:#2f855a;font-weight:800;}
 .descended-ok{color:#2f855a;font-weight:800;}
 .flash{background:#fff7cc;}
+
+/* 当日行（右セル含む）を薄く強調 */
+tr.todayrow td{background:var(--today-row-bg);}
 </style>
 </head>
 <body>
@@ -446,7 +469,7 @@ button.ackbtn:disabled{
     <strong style="font-size:140%;"><?=$y?>年<?=$m?>月</strong>
     <a href="?y=<?=$next->format('Y')?>&m=<?=$next->format('n')?>">次月&gt;</a>
     <span style="margin-left:12px; font-size:90%;">
-      <a href="?y=<?=$y?>&m=<?=$m?>&export=tansin">短信CSV</a>
+      <a href="?y=<?=$y?>&m=<?=$m?>&export=tansin">山行短信CSV</a>
       |
       <a href="?y=<?=$y?>&export=sanko">sanko<?=$y?>.csv</a>
     </span>
@@ -471,8 +494,11 @@ for($d=1;$d<=$daysInMonth;$d++){
   $wlabel=['日','月','火','水','木','金','土'][$w];
   $wcls=$w===0?'w-sun':($w===6?'w-sat':'');
 
-  echo "<tr>";
-  echo '<td class="daycell '.$wcls.'"><a href="edit.php?mode=new&date='.h($date).'&back_y='.$y.'&back_m='.$m.'">'.$d.'</a><br>'.$wlabel.'</td>';
+  
+  $todayCls = ($date === $todayYmd) ? ' today' : '';
+  $todayRowCls = ($date === $todayYmd) ? 'todayrow' : '';
+  echo '<tr class="'.$todayRowCls.'">';
+    echo '<td class="daycell '.$wcls.$todayCls.'"><a href="edit.php?mode=new&date='.h($date).'&back_y='.$y.'&back_m='.$m.'">'.$d.'</a><br>'.$wlabel.'</td>';
   echo '<td>';
 
   if(!empty($byDate[$date])){
@@ -493,9 +519,9 @@ for($d=1;$d<=$daysInMonth;$d++){
         $stDisp='CLIMBING';
       }
       if($cat==='イベント' || $cat==='その他'){
-        echo '<span class="badge st-CAT">'.h($cat).'</span>';
+        echo '<a class="stlink" href="edit.php?mode=edit&id='.(int)$r['id'].'&back_y='.(int)$y.'&back_m='.(int)$m.'"><span class="badge st-CAT">'.h($cat).'</span></a>';
       }else{
-        echo status_badge($stDisp);
+        echo status_badge($stDisp, (int)$r['id'], (int)$y, (int)$m);
       }
 
       // 追加：募集の参加希望数（参加希望のみカウント）
@@ -510,7 +536,7 @@ for($d=1;$d<=$daysInMonth;$d++){
       $t = (string)$r['title'];
       $d1 = (string)$r['date_ymd'];
       $d2 = isset($r['date_to']) && $r['date_to'] !== '' ? (string)$r['date_to'] : $d1;
-      echo '<strong>'.h($t).'</strong>';
+      echo '<a href="edit.php?mode=edit&id='.(int)$r['id'].'&back_y='.(int)$y.'&back_m='.(int)$m.'"><strong>'.h($t).'</strong></a>';
       if($d2 !== $d1){
         // 例）25日～26日 → 「※26日下山」
         $endY = (int)substr($d2, 0, 4);
@@ -554,27 +580,18 @@ for($d=1;$d<=$daysInMonth;$d++){
 
 // 追加：下山受け了承（提出された計画に対して）
 $st = (string)($r['status'] ?? '');
-if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
+if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CANCELLED'){
   if($r['descent_contact']){
     // 下山済みなら確認時刻を表示
     if($st==='DESCENDED' && !empty($r['descended_at'])){
       $hm = date('H:i', strtotime((string)$r['descended_at']));
       $line2b[] = '<span class="descended-ok">'.$hm.'下山確認済</span>';
+    }elseif($st==='CANCELLED' && !empty($r['descended_at'])){
+      $hm = date('H:i', strtotime((string)$r['descended_at']));
+      $line2b[] = '<span class="descended-ok">'.$hm.'山行中止</span>';
     }else{
-      $ack = (int)($r['descent_ack'] ?? 0);
-      if($ack!==1){
-        // 未受け了承：ボタン
-        $line2b[] = '<form class="ackform" method="post" action="" style="display:inline;">'
-                  . '<input type="hidden" name="action" value="descent_ack">'
-                  . '<input type="hidden" name="id" value="'.h((string)$r['id']).'">'
-                  . '<input type="hidden" name="back_y" value="'.h((string)$y).'">'
-                  . '<input type="hidden" name="back_m" value="'.h((string)$m).'">'
-                  . '<button class="ackbtn" type="submit" onclick="return confirm(\'下山受けを承知します。よろしいですか？\')">下山受け了承</button>'
-                  . '</form>';
-      }else{
-        // 受け了承済：メッセージ＋当日なら下山確認ボタン
-        $line2b[] = '<span class="ack-ok">下山受け承知済</span>';
-
+      if(!$USE_DESCENT_ACK){
+        // 下山受け了承は無効（運用簡略化）。当日なら下山確認ボタンのみ表示
         $d1 = (string)($r['date_ymd'] ?? '');
         $d2 = isset($r['date_to']) && $r['date_to']!=='' ? (string)$r['date_to'] : $d1;
         $today = date('Y-m-d');
@@ -587,12 +604,40 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
                     . '<button class="ackbtn" type="submit" onclick="return confirm(\'下山確認を記録します。よろしいですか？\')">下山確認</button>'
                     . '</form>';
         }
+      }else{
+        $ack = (int)($r['descent_ack'] ?? 0);
+        if($ack!==1){
+          // 未受け了承：ボタン
+          $line2b[] = '<form class="ackform" method="post" action="" style="display:inline;">'
+                    . '<input type="hidden" name="action" value="descent_ack">'
+                    . '<input type="hidden" name="id" value="'.h((string)$r['id']).'">'
+                    . '<input type="hidden" name="back_y" value="'.h((string)$y).'">'
+                    . '<input type="hidden" name="back_m" value="'.h((string)$m).'">'
+                    . '<button class="ackbtn" type="submit" onclick="return confirm(\'下山受けを承知します。よろしいですか？\')">下山受け了承</button>'
+                    . '</form>';
+        }else{
+          // 受け了承済：メッセージ＋当日なら下山確認ボタン
+          $line2b[] = '<span class="ack-ok">下山受け承知済</span>';
+
+          $d1 = (string)($r['date_ymd'] ?? '');
+          $d2 = isset($r['date_to']) && $r['date_to']!=='' ? (string)$r['date_to'] : $d1;
+          $today = date('Y-m-d');
+          if($d1!=='' && $today>=$d1 && $today<=$d2 && ($st==='PLAN_SUBMITTED' || $st==='APPROVED')){
+            $line2b[] = '<form class="confirmform" method="post" action="" style="display:inline;">'
+                      . '<input type="hidden" name="action" value="descend_confirm">'
+                      . '<input type="hidden" name="id" value="'.h((string)$r['id']).'">'
+                      . '<input type="hidden" name="back_y" value="'.h((string)$y).'">'
+                      . '<input type="hidden" name="back_m" value="'.h((string)$m).'">'
+                      . '<button class="ackbtn" type="submit" onclick="return confirm(\'下山確認を記録します。よろしいですか？\')">下山確認</button>'
+                      . '</form>';
+          }
+        }
       }
     }
   }
 }
 
-       if($dl!=='') array_unshift($line2b, '（最終連絡:'.h(fmt_deadline($dl,(string)$r['date_ymd'])).'）');
+       if($dl!=='' && (string)($r['category'] ?? '')==='山行計画') array_unshift($line2b, '（最終連絡:'.h(fmt_deadline($dl,(string)$r['date_ymd'])).'）');
 
       $line2='';
       if(count($line2a)===2){
@@ -640,6 +685,7 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
     if(!forms || !forms.forEach) return;
     forms.forEach(function(form){
       form.addEventListener('submit', function(ev){
+        if(form.__noajax) return;
         if(!window.fetch) return;
         ev.preventDefault();
         var btn = form.querySelector('button');
@@ -656,6 +702,8 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
           }).catch(function(){
             if(btn) btn.disabled = false;
             if(onFail) onFail(form, fd);
+            // ★追加：AJAXに失敗したら通常のフォーム送信にフォールバック
+            try{ form.__noajax = true; form.submit(); }catch(e){}
           });
       });
     });
@@ -731,7 +779,11 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
 
   function setStatusDescended(item){
     if(!item) return;
-    var badge = item.querySelector('.badge');
+    // ★修正：ステータス用バッジを優先して拾う（カテゴリ等のバッジを誤って書き換えない）
+    var badge =
+      item.querySelector('.badge.st-PLANNING, .badge.st-RECRUIT, .badge.st-PLAN_SUBMITTED, .badge.st-APPROVED, .badge.st-CLIMBING, .badge.st-DESCENDED, .badge.st-CANCELLED, .badge.st-CLOSED')
+      || item.querySelector('.badge[class*="st-"]:not(.st-CAT)')
+      || item.querySelector('.badge');
     if(badge){
       badge.className = 'badge st-DESCENDED';
       badge.textContent = '下山';
@@ -760,17 +812,14 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
         ack.className = 'descended-ok';
         ack.textContent = t;
       }else{
+        // 下山受け了承を無効化している運用では .ack-ok が無いので、ボタン位置を確認済表示に置換
         var div = document.createElement('span');
         div.className = 'descended-ok';
         div.textContent = t;
         form.replaceWith(div);
-        return;
       }
 
-      // 下山確認ボタンは消す
-      form.remove();
-
-      // ステータス表示を下山に変更
+      // ステータス表示を下山に変更（表示の取りこぼし防止）
       setStatusDescended(item);
     }
   }
@@ -783,4 +832,23 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED'){
 
 <iframe name="bg_line_send" style="display:none;"></iframe>
 </body>
+<script>
+function sendHeight(){
+  var h = Math.max(
+    document.body ? document.body.scrollHeight : 0,
+    document.body ? document.body.offsetHeight : 0,
+    document.documentElement ? document.documentElement.scrollHeight : 0,
+    document.documentElement ? document.documentElement.offsetHeight : 0
+  );
+  parent.postMessage({type:"resize", height:h}, "*");
+}
+
+window.addEventListener("load", function(){
+  sendHeight();
+  setTimeout(sendHeight, 300);
+  setTimeout(sendHeight, 1000);
+});
+
+window.addEventListener("resize", sendHeight);
+</script>
 </html>
