@@ -10,11 +10,6 @@ $dbPath = __DIR__ . '/trip_manage.db';
 if (is_file(__DIR__ . '/line_config.php')) {
   require_once __DIR__ . '/line_config.php';
 }
-if (!defined('TRIP_NOTIFY_METHOD')) define('TRIP_NOTIFY_METHOD', 'mail'); // 'mail' or 'line'
-if (!defined('TRIP_NOTIFY_SUBMIT_TO')) define('TRIP_NOTIFY_SUBMIT_TO', 'mtakaha@lemon.plala.or.jp');
-if (!defined('TRIP_NOTIFY_ALARM_TO')) define('TRIP_NOTIFY_ALARM_TO', 'mtakaha@lemon.plala.or.jp');
-if (!defined('TRIP_NOTIFY_FROM')) define('TRIP_NOTIFY_FROM', '');
-if (!defined('TRIP_NOTIFY_FROM_NAME')) define('TRIP_NOTIFY_FROM_NAME', '山びこ山行管理');
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
@@ -67,20 +62,20 @@ function trip_format_people(?int $people): string{
 }
 
 function trip_mail_headers(): string{
-  $headers = [
-    'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
-  ];
   $from = trim((string)TRIP_NOTIFY_FROM);
-  if($from!==''){
-    $fromName = trim((string)TRIP_NOTIFY_FROM_NAME);
-    if($fromName!==''){
-      $headers[] = 'From: '.mb_encode_mimeheader($fromName,'UTF-8').' <'.$from.'>';
-    }else{
-      $headers[] = 'From: '.$from;
-    }
+  $fromName = trim((string)TRIP_NOTIFY_FROM_NAME);
+  if($from==='') $from = 'info@satubiko.com';
+
+  $headers = [];
+  $headers[] = 'MIME-Version: 1.0';
+  if($fromName!==''){
+    $headers[] = 'From: '.mb_encode_mimeheader($fromName,'ISO-2022-JP-MS').' <'.$from.'>';
+  }else{
+    $headers[] = 'From: '.$from;
   }
+  $headers[] = 'Reply-To: '.$from;
+  $headers[] = 'Content-Type: text/plain; charset=ISO-2022-JP';
+  $headers[] = 'Content-Transfer-Encoding: 7bit';
   return implode("\r\n", $headers);
 }
 
@@ -113,7 +108,7 @@ function build_alarm_mail(array $r): array{
   $body[] = trip_planlist_url((string)($r['date_ymd'] ?? ''));
   return [
     'to' => (string)TRIP_NOTIFY_ALARM_TO,
-    'subject' => '最終下山時刻の超過をお知らせします',
+    'subject' => '【山びこ通知】最終下山時刻超過のお知らせ',
     'body' => implode("\n", $body),
   ];
 }
@@ -313,7 +308,7 @@ try {
   
   // 当日強調表示用
   $todayYmd = date('Y-m-d');
-$start=ymd($y,$m,1);
+  $start=ymd($y,$m,1);
   $end=ymd($y,$m,$daysInMonth);
 
   $hasRecruit = (bool)$pdo->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='trip_recruit_join'")->fetchColumn();
@@ -515,10 +510,11 @@ function is_over_deadline(string $status, string $dl): bool{
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>山行一覧表</title>
 <style>
 body{font-family:system-ui,Meiryo,sans-serif;margin:12px;}
-.topbar{display:flex;justify-content:space-between;margin-bottom:8px;}
+.topbar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;}
 table{border-collapse:collapse;width:100%;}
 th,td{border:1px solid #ccc;padding:6px 8px;font-size:14px;vertical-align:top;}
 th{background:#f3f3f3;}
@@ -616,6 +612,78 @@ button.ackbtn:disabled{
 
 /* 当日行（右セル含む）を薄く強調 */
 tr.todayrow td{background:var(--today-row-bg);}
+
+/* ▼追加 */
+button {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+
+@media (max-width: 700px){
+  body{
+    margin:8px;
+    font-size:16px;
+  }
+
+  .topbar{
+    gap:6px;
+    align-items:flex-start;
+    flex-wrap:wrap;
+  }
+
+  table{
+    table-layout:fixed;
+  }
+
+  th,td{
+    padding:8px 6px;
+    font-size:15px;
+  }
+
+  .daycell{
+    width:44px;
+    font-size:13px;
+    padding:6px 4px;
+  }
+
+  .item{
+    padding:8px 6px;
+    border-radius:8px;
+  }
+
+  .line1{
+    gap:6px;
+  }
+
+  .line2{
+    font-size:15px;
+    line-height:1.45;
+  }
+
+  .note{
+    font-size:13px;
+    line-height:1.45;
+  }
+
+  .badge{
+    font-size:11px;
+    padding:2px 6px;
+  }
+
+  .recruitcnt{
+    display:block;
+    margin-left:0;
+    margin-top:4px;
+    font-size:12px;
+  }
+
+  button.ackbtn{
+    width:100%;
+    max-width:100%;
+    padding:8px 10px;
+    font-size:14px;
+  }
+}
 </style>
 </head>
 <body>
@@ -654,7 +722,7 @@ for($d=1;$d<=$daysInMonth;$d++){
   
   $todayCls = ($date === $todayYmd) ? ' today' : '';
   $todayRowCls = ($date === $todayYmd) ? 'todayrow' : '';
-  echo '<tr class="'.$todayRowCls.'">';
+  echo '<tr id="'.($date === $todayYmd ? 'todayrow' : '').'" class="'.h($todayRowCls).'">';
     echo '<td class="daycell '.$wcls.$todayCls.'"><a href="edit.php?mode=new&date='.h($date).'&back_y='.$y.'&back_m='.$m.'">'.$d.'</a><br>'.$wlabel.'</td>';
   echo '<td>';
 
@@ -1007,5 +1075,14 @@ window.addEventListener("load", function(){
 });
 
 window.addEventListener("resize", sendHeight);
+
+window.addEventListener("load", function(){
+  if (window.innerWidth <= 768) {
+    const t = document.getElementById("todayrow");
+    if (t) {
+      t.scrollIntoView({behavior:"instant", block:"start"});
+    }
+  }
+});
 </script>
 </html>
