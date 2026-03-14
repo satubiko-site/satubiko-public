@@ -1,0 +1,98 @@
+<!DOCTYPE html">
+<html lang="ja">
+
+<head>
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-X3R3DEHC1B"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+
+    gtag('config', 'G-X3R3DEHC1B');
+  </script>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=Shift_JIS">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>山行管理表&nbsp;｜&nbsp;山びこ会員ページ</title>
+  <link rel="shortcut icon" href="../gif/ylogo2.ico">
+  <link href="common.css" rel="stylesheet" type="text/css">
+  <link href="index.css" rel="stylesheet" type="text/css">
+  <script>
+    window.addEventListener("message", function (e) {
+      if (e.data.type === "resize") {
+        document.getElementById("tripframe").style.height = e.data.height + "px";
+      }
+    });
+  </script>
+</head>
+
+<body>
+  <script>
+    if (window.innerWidth <= 768) {
+      location.replace("/member/trip/planlist.php");
+    }
+  </script>
+  </script>
+
+  <div id="qms">
+    <div id="container">
+      <div id="header">
+        <h1></h1>
+        <div class="menu">
+          <ul>
+            <li class="single"><a href="top.html">会員ページTOP</a></li>
+            <li class="single"><a href="kanri.html">山行管理</a></li>
+            <li class="single_sel"><a href="planlist.html">山行管理表</a></li>
+            <li class="single"><a href="library.html">共有書庫</a></li>
+            <li class="single"><a href="gezan.html">下山連絡当番表</a></li>
+            <li class="single"><a
+                href="https://www.google.com/maps/d/viewer?mid=1j2WzOxLinoJjlmNEvn3iOta13yPumeI&ll=43.051289043145836%2C141.42564505&z=10"
+                target="_blank">会員マップ</a></li>
+            <li class="single"><a href="maillist.html">メーリングリスト</a></li>
+            <li class="single"><a href="howto.html">記事投稿の方法</a></li>
+            <li class="single"><a href="jiko.html">ヒヤリ事故報告</a></li>
+            　 <li class="single"><a href="teach.html">動画で学ぶ登山技術</a></li>
+          </ul>
+        </div> <!-- end menu -->
+      </div> <!-- end #header -->
+
+      <br /><br /><br /><br />
+
+      <div id="mainContent">
+
+        <div id="Center">
+
+          <div class="contents1">
+            <h2>山行管理表（評価版）について</h2>
+            <p>
+              山行管理表は、計画書からの情報の取り込みにより入力作業が格段に楽になります。また、ボタンクリックでMLへの通知も行うことができます。<br>
+              さらに山行当日は下山完了を監視し、最終下山時刻が過ぎでも下山していない場合には<font color="red">警告表示</font>します。<br>
+              下山完了はボタンのクリックで知らせますが、この手順は新しいオペレーションとなります。<br>
+              このように便利な反面、作業の手間が増えるのではという懸念もあるため、本評価版で実用性を評価していただき、そのうえで導入できればと考えています。(2026/03/10)<br>
+              <br>
+              管理表の各山行ごとに以下の状態表示を行います。<br>
+              　　予定　：山行一覧表に登録した（計画を提出する前）<br>
+              　　募集　：山行への参加を募集している<br>
+              　　提出　：山行計画を会に提出した　ー　指定によりMLへの通知を行う<br>
+              　　登山中：山行当日（下山確認待ち） <font color="red">　ー　最終下山時刻を過ぎたかシステムが監視</font> <br>
+              　　下山　：下山の完了を確認した　ー　下山の完了確認は下山受け担当者もしくは山行者が行う<br>
+              　　中止　：天候悪化などで山行を中止した<br>
+              　　終了　：報告書を作成し、すべて終了した<br>
+            </p><br>
+            <div style="font-size:15px; text-align:right;"><a href="planlist.html">現用の山行一覧表はこちら</a></div>
+            <iframe id="tripframe" name="tripframe" src="/member/trip/planlist.php"
+              style="background-color:#fff; width:100%; border:medium; min-height:600px; height:600px;"></iframe>
+          </div> <!-- end conternt1 -->
+        </div> <!-- end Center -->
+
+      </div><!-- end #mainContent -->
+      <div class="clearfloat"></div>
+      <div class="pagetop"><a href="#">ページ先頭に戻る↑</a></div>
+      <br class="clearfloat" />
+
+    </div> <!-- end #container -->
+  </div> <!-- end qms -->
+</body>
+
+</html>
