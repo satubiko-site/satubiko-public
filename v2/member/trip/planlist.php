@@ -13,6 +13,16 @@ if (is_file(__DIR__ . '/line_config.php')) {
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
+function is_mobile_view(): bool{
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    return (bool)preg_match('/iPhone|iPod|Android.+Mobile|Windows Phone/i', $ua);
+}
+
+function trip_edit_link(string $url, string $label, string $class=''): string{
+    $classAttr = $class !== '' ? ' class="'.h($class).'"' : '';
+    return '<a'.$classAttr.' href="'.h($url).'">'.h($label).'</a>';
+}
+
 function trip_notify_method(): string{
   $m = strtolower(trim((string)TRIP_NOTIFY_METHOD));
   return ($m === 'line') ? 'line' : 'mail';
@@ -462,20 +472,29 @@ try {
   exit;
 }
 
-function status_badge(string $st, int $id, int $backY, int $backM):string{
-  $map=[
-    'PLANNING'=>'予定',
-    'RECRUIT'=>'募集',
-    'PLAN_SUBMITTED'=>'提出',
-    'CLIMBING'=>'登山中',
-    'APPROVED'=>'精査',
-    'DESCENDED'=>'下山',
-    'CANCELLED'=>'中止',
-    'CLOSED'=>'終了',
-  ];
+function status_badge(string $st, int $id, int $backY, int $backM): string{
+    $map = [
+        'PLANNING'       => '予定',
+        'RECRUIT'        => '募集',
+        'PLAN_SUBMITTED' => '提出',
+        'CLIMBING'       => '登山中',
+        'APPROVED'       => '精査',
+        'DESCENDED'      => '下山',
+        'CANCELLED'      => '中止',
+        'CLOSED'         => '終了',
+    ];
     $label = $map[$st] ?? $st;
-  $cls = 'st-'.preg_replace('/[^A-Z0-9_]/', '', $st);
-  return '<a class="stlink" href="edit.php?mode=edit&id='.(int)$id.'&back_y='.(int)$backY.'&back_m='.(int)$backM.'"><span class="badge '.$cls.'">'.h($label).'</span></a>';
+    $cls   = 'badge st-'.preg_replace('/[^A-Z0-9_]/', '', $st);
+
+    $url = 'edit.php?mode=edit&id='.(int)$id.'&back_y='.(int)$backY.'&back_m='.(int)$backM;
+
+    // スマホでは edit.php を直接表示
+    if (is_mobile_view()) {
+        return '<a class="stlink" href="'.h($url).'"><span class="'.h($cls).'">'.h($label).'</span></a>';
+    }
+
+    // PCでは従来どおり iframe 内遷移
+    return '<a class="stlink" href="'.h($url).'" target="tripframe"><span class="'.h($cls).'">'.h($label).'</span></a>';
 }
 
 
@@ -557,12 +576,9 @@ th{background:#f3f3f3;}
   background:#eef7f5;
   border-left-color:#1b8f7a;
 }
-
-
 .cat-plan{border-left-color:#1e6bd6;background:#f6f9ff;}
 .cat-event{border-left-color:#d67c1e;background:#fff8f1;}
 .cat-other{border-left-color:#666;background:#f7f7f7;}
-
 .recruitcnt{margin-left:6px;font-size:12px;white-space:nowrap;}
 
 /* 下山受け了承／下山確認（一覧での受付操作） */
@@ -575,11 +591,9 @@ button.ackbtn{
   color:#2f855a;
   font-weight:800;
   cursor:pointer;
-
   box-shadow:
     0 1px 0 rgba(255,255,255,.9) inset,
     0 2px 6px rgba(0,0,0,.15);
-
   transition:all .15s ease;
 }
 
@@ -597,92 +611,47 @@ button.ackbtn:active{
     0 1px 3px rgba(0,0,0,.15);
 }
 
-button.ackbtn:focus-visible{
-  outline:3px solid rgba(0,120,255,.35);
-  outline-offset:2px;
-}
-
-button.ackbtn:disabled{
-  opacity:.6;
-  cursor:default;
-}
+button.ackbtn:focus-visible{outline:3px solid rgba(0,120,255,.35);outline-offset:2px;}
+button.ackbtn:disabled{opacity:.6;cursor:default;}
 .ack-ok{color:#2f855a;font-weight:800;}
 .descended-ok{color:#2f855a;font-weight:800;}
 .flash{background:#fff7cc;}
 
 /* 当日行（右セル含む）を薄く強調 */
 tr.todayrow td{background:var(--today-row-bg);}
+/* 新規登録ボタン　*/
+.newbtn{
+  display:inline-block;
+  padding:6px 14px;
+  border:1px solid #2563eb;
+  border-radius:8px;
+  background:linear-gradient(#ffffff,#e8f0ff);
+  color:#1e40af;
+  font-weight:700;
+  text-decoration:none;
 
-/* ▼追加 */
-button {
-  min-height: 44px;
-  touch-action: manipulation;
+  box-shadow:0 2px 6px rgba(0,0,0,.15);
+  transition:all .15s ease;
 }
 
+/* ▼追加 */
+button {min-height: 44px;touch-action: manipulation;}
+
+.item:target{outline:2px solid #f0c000;background:#fffbe6;}
+
 @media (max-width: 700px){
-  body{
-    margin:8px;
-    font-size:16px;
-  }
-
-  .topbar{
-    gap:6px;
-    align-items:flex-start;
-    flex-wrap:wrap;
-  }
-
-  table{
-    table-layout:fixed;
-  }
-
-  th,td{
-    padding:8px 6px;
-    font-size:15px;
-  }
-
-  .daycell{
-    width:44px;
-    font-size:13px;
-    padding:6px 4px;
-  }
-
-  .item{
-    padding:8px 6px;
-    border-radius:8px;
-  }
-
-  .line1{
-    gap:6px;
-  }
-
-  .line2{
-    font-size:15px;
-    line-height:1.45;
-  }
-
-  .note{
-    font-size:13px;
-    line-height:1.45;
-  }
-
-  .badge{
-    font-size:11px;
-    padding:2px 6px;
-  }
-
-  .recruitcnt{
-    display:block;
-    margin-left:0;
-    margin-top:4px;
-    font-size:12px;
-  }
-
-  button.ackbtn{
-    width:100%;
-    max-width:100%;
-    padding:8px 10px;
-    font-size:14px;
-  }
+  body{margin:8px;font-size:16px;}
+  .topbar{gap:6px;align-items:flex-start;flex-wrap:wrap;}
+  table{table-layout:fixed;}
+  th,td{padding:8px 6px;font-size:15px;}
+  .daycell{width:44px;font-size:13px;padding:6px 4px;}
+  .item{padding:8px 6px;border-radius:8px;}
+  .line1{gap:6px;}
+  .line2{font-size:15px;line-height:1.45;}
+  .note{font-size:13px;line-height:1.45;}
+  .badge{font-size:11px;padding:2px 6px;}
+  .recruitcnt{display:block;margin-left:0;margin-top:4px;font-size:12px;}
+  button.ackbtn{width:100%;max-width:100%;padding:8px 10px;font-size:14px;}
 }
 </style>
 </head>
@@ -699,13 +668,14 @@ button {
       <a href="?y=<?=$y?>&export=sanko">sanko<?=$y?>.csv</a>
     </span>
   </div>
-
-  <div>
-    <a href="edit.php?mode=new&date=<?=h(sprintf('%04d-%02d-01',$y,$m))?>&back_y=<?=$y?>&back_m=<?=$m?>"
-       style="display:inline-block;padding:6px 10px;border:1px solid #666;border-radius:6px;text-decoration:none;background:#fafafa;">
-      新規登録
-    </a>
-  </div>
+  <?php
+  $newUrl = 'edit.php?mode=new&back_y='.(int)$y.'&back_m='.(int)$m;
+  if (is_mobile_view()) {
+      echo '<a class="newbtn" href="'.h($newUrl).'">新規登録</a>';
+  } else {
+      echo '<a class="newbtn" href="'.h($newUrl).'" target="tripframe">新規登録</a>';
+  }
+  ?>
 </div>
 
 <table>
@@ -723,9 +693,12 @@ for($d=1;$d<=$daysInMonth;$d++){
   $todayCls = ($date === $todayYmd) ? ' today' : '';
   $todayRowCls = ($date === $todayYmd) ? 'todayrow' : '';
   echo '<tr id="'.($date === $todayYmd ? 'todayrow' : '').'" class="'.h($todayRowCls).'">';
-    echo '<td class="daycell '.$wcls.$todayCls.'"><a href="edit.php?mode=new&date='.h($date).'&back_y='.$y.'&back_m='.$m.'">'.$d.'</a><br>'.$wlabel.'</td>';
+  $newDayUrl = 'edit.php?mode=new&date='.rawurlencode($date).'&back_y='.(int)$y.'&back_m='.(int)$m;
+  $newDayTarget = is_mobile_view() ? '' : ' target="tripframe"';
+  
+  echo '<td class="daycell '.$wcls.$todayCls.'"><a href="'.h($newDayUrl).'"'.$newDayTarget.'>'.$d.'</a><br>'.$wlabel.'</td>';
+  
   echo '<td>';
-
   if(!empty($byDate[$date])){
     foreach($byDate[$date] as $r){
       $dl = isset($r['final_contact_deadline']) ? (string)$r['final_contact_deadline'] : '';
@@ -783,7 +756,17 @@ for($d=1;$d<=$daysInMonth;$d++){
       if((string)($r['status'] ?? '') !== 'DESCENDED'){
         echo '&nbsp;&nbsp;';
       }
-      echo '<a href="edit.php?mode=edit&id='.(int)$r['id'].'&back_y='.$y.'&back_m='.$m.'">修正</a></span>';
+      $editUrl = 'edit.php?mode=edit&id='.(int)$r['id'].'&back_y='.(int)$y.'&back_m='.(int)$m;
+      
+      if ((string)($r['status'] ?? '') !== 'DESCENDED') {
+          echo '&nbsp;&nbsp;';
+      }
+      
+      if (is_mobile_view()) {
+          echo '<a href="'.h($editUrl).'">修正</a>';
+      } else {
+          echo '<a href="'.h($editUrl).'" target="tripframe">修正</a>';
+      }
       echo '</div>';
 
       // 2行目以降
@@ -1077,10 +1060,21 @@ window.addEventListener("load", function(){
 window.addEventListener("resize", sendHeight);
 
 window.addEventListener("load", function(){
+  // URLに #trip-xxx などのハッシュがある場合は、その位置を優先
+  if (location.hash) {
+    var id = location.hash.substring(1);
+    var target = document.getElementById(id);
+    if (target) {
+      target.scrollIntoView({behavior:"auto", block:"start"});
+    }
+    return;
+  }
+
+  // ハッシュが無いときだけ、スマホでは当日行へ寄せる
   if (window.innerWidth <= 768) {
-    const t = document.getElementById("todayrow");
+    var t = document.getElementById("todayrow");
     if (t) {
-      t.scrollIntoView({behavior:"instant", block:"start"});
+      t.scrollIntoView({behavior:"auto", block:"start"});
     }
   }
 });

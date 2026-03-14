@@ -11,17 +11,11 @@ header('Content-Type: text/html; charset=UTF-8');
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 
-
 $dbPath = __DIR__ . '/trip_manage.db';
 
 if (is_file(__DIR__ . '/line_config.php')) {
     require_once __DIR__ . '/line_config.php';
 }
-if (!defined('TRIP_NOTIFY_METHOD')) define('TRIP_NOTIFY_METHOD', 'mail'); // 'mail' or 'line'
-if (!defined('TRIP_NOTIFY_SUBMIT_TO')) define('TRIP_NOTIFY_SUBMIT_TO', 'mtakaha@lemon.plala.or.jp');
-if (!defined('TRIP_NOTIFY_ALARM_TO')) define('TRIP_NOTIFY_ALARM_TO', 'mtakaha@lemon.plala.or.jp');
-if (!defined('TRIP_NOTIFY_FROM')) define('TRIP_NOTIFY_FROM', '');
-if (!defined('TRIP_NOTIFY_FROM_NAME')) define('TRIP_NOTIFY_FROM_NAME', '山びこ山行管理');
 
 function h(string $s): string { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 
@@ -93,13 +87,11 @@ function trip_mail_headers(): string {
 
 function trip_send_mail(string $to, string $subject, string $body): bool {
     if (trim($to) === '') return false;
+    if (!function_exists('mb_send_mail')) return false;
     if (function_exists('mb_language')) @mb_language('Japanese');
     if (function_exists('mb_internal_encoding')) @mb_internal_encoding('UTF-8');
     $headers = trip_mail_headers();
-    if (function_exists('mb_send_mail')) {
-        return @mb_send_mail($to, $subject, $body, $headers);
-    }
-    return @mail($to, $subject, $body, $headers);
+    return @mb_send_mail($to, $subject, $body, $headers);
 }
 
 function build_submit_mail(array $r): array {
@@ -122,10 +114,10 @@ function build_submit_mail(array $r): array {
         $body[] = '';
     }
     $body[] = '山びこ山行管理一覧表リンク';
-    $body[] = trip_planlist_url((string)($r['date_ymd'] ?? ''));
+    $body[] = trip_planlist_url((string)($r['date_ymd'] ?? '')) . '#trip-' . (string)($r['id'] ?? '');
     return [
         'to' => (string)TRIP_NOTIFY_SUBMIT_TO,
-        'subject' => '山行計画提出と下山連絡依頼',
+        'subject' => '【山びこ通知】山行計画提出と下山連絡依頼',
         'body' => implode("\n", $body),
     ];
 }
@@ -1337,7 +1329,7 @@ INSERT INTO trips(
 
 $categoryOptions = ['山行計画','イベント','その他'];
 $typeOptions = ['会山行','サークル','個人','単独'];
-$styleOptions = ['尾根','沢','岩','山スキー','スノーシュー','氷雪'];
+$styleOptions = ['尾根','沢','岩','山スキー','スノーシュー','山スキー＆スノーシュー','氷雪'];
 $statusOptions = [
     'PLANNING'       => '予定',
     'RECRUIT'        => '募集',
@@ -1357,6 +1349,9 @@ $redirect_url = '';
 $redirect_delay_ms = 1200; // 1.2秒（必要なら変更）
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error === '' && $info !== '') {
     $redirect_url = 'planlist.php?y=' . $backY . '&m=' . $backM;
+    if ($id > 0) {
+      $redirect_url .= '#trip-'.(int)$id;
+    }
 }
 
 
@@ -1366,6 +1361,7 @@ $isPlanCategory = ((string)$row['category'] === '山行計画');
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>山行管理表の登録/修正</title>
 <style>
   body{font-family:system-ui,-apple-system,"Segoe UI",Meiryo,sans-serif; margin:12px; color:#111;}
@@ -1411,10 +1407,25 @@ button.secondary-btn{
   color:#333;
   border-radius:8px;
 }
-
-
   /* ★追加：イベント/その他の場合は山行計画用ボタンを非表示 */
   body[data-isplan="0"] [data-planonly="1"]{display:none !important;}
+
+  @media (max-width: 700px){
+  body{margin:8px;font-size:16px;}
+  .title{font-size:20px;text-align:left;line-height:1.4;margin-bottom:8px;}
+  .bar{display:block;margin-bottom:12px;}
+  .bar a{display:inline-block;margin-top:4px;}
+  label{margin-top:12px;font-size:14px;}
+  input[type=text], textarea, select, input[type=number]{
+    width:100%;min-height:44px;padding:8px 10px;font-size:16px;}
+  input[type=text-half]{width:100%;min-height:44px;padding:8px 10px;font-size:16px;}
+  textarea{min-height:96px;}
+  .row2{grid-template-columns:1fr;gap:8px;}
+  .hint{font-size:12px;line-height:1.4;}
+  .btns{gap:8px;}
+  .btns button{min-height:44px;padding:8px 12px;font-size:14px;}
+}
+
 </style>
 </head>
 <body data-isplan="<?php echo ($isPlanCategory?'1':'0'); ?>">
