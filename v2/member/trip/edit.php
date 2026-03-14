@@ -2487,16 +2487,28 @@ if (btnRecruit) {
 
 (function () {
   function getDocHeight() {
-    var b = document.body;
-    var e = document.documentElement;
-    return Math.max(
-      b ? b.scrollHeight : 0,
-      e ? e.scrollHeight : 0,
-      b ? b.offsetHeight : 0,
-      e ? e.offsetHeight : 0,
-      b ? b.clientHeight : 0,
-      e ? e.clientHeight : 0
-    );
+    var maxBottom = 0;
+    var nodes = document.body ? document.body.children : [];
+    var scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      if (!el) continue;
+
+      var tag = (el.tagName || '').toUpperCase();
+      if (tag === 'SCRIPT' || tag === 'STYLE') continue;
+
+      var cs = window.getComputedStyle(el);
+      if (!cs) continue;
+      if (cs.display === 'none') continue;
+      if (cs.position === 'fixed') continue;
+
+      var rect = el.getBoundingClientRect();
+      var bottom = rect.bottom + scrollY;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+
+    return Math.ceil(maxBottom) + 24;
   }
 
   function sendHeight() {
@@ -2522,10 +2534,10 @@ if (btnRecruit) {
   window.addEventListener('pageshow', sendHeightLater);
   window.addEventListener('resize', sendHeight);
 
-  if (window.ResizeObserver && document.documentElement) {
+  if (window.ResizeObserver && document.body) {
     new ResizeObserver(function () {
       sendHeight();
-    }).observe(document.documentElement);
+    }).observe(document.body);
   }
 
   if (window.MutationObserver && document.body) {
@@ -2539,6 +2551,7 @@ if (btnRecruit) {
     });
   }
 })();
+
 </script>
 
 <!-- 追加: confirm() がブラウザ設定で抑止される場合に備えた簡易ダイアログ -->
