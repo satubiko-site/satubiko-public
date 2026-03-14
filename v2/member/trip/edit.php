@@ -2484,30 +2484,61 @@ if (btnRecruit) {
   }
 
 })();
-</script>
-<script>
-function sendHeight(){
-  var h = Math.max(
-    document.body ? document.body.scrollHeight : 0,
-    document.body ? document.body.offsetHeight : 0,
-    document.documentElement ? document.documentElement.scrollHeight : 0,
-    document.documentElement ? document.documentElement.offsetHeight : 0
-  );
-  parent.postMessage({type:"resize", height:h}, "*");
-}
 
-function sendHeightLater(){
-  sendHeight();
-  setTimeout(sendHeight, 50);
-  setTimeout(sendHeight, 200);
-  setTimeout(sendHeight, 500);
-  setTimeout(sendHeight, 1000);
-}
+(function () {
+  function getDocHeight() {
+    var b = document.body;
+    var e = document.documentElement;
+    return Math.max(
+      b ? b.scrollHeight : 0,
+      e ? e.scrollHeight : 0,
+      b ? b.offsetHeight : 0,
+      e ? e.offsetHeight : 0,
+      b ? b.clientHeight : 0,
+      e ? e.clientHeight : 0
+    );
+  }
 
-document.addEventListener("DOMContentLoaded", sendHeightLater);
-window.addEventListener("load", sendHeightLater);
-window.addEventListener("pageshow", sendHeightLater);
-window.addEventListener("resize", sendHeight);
+  function sendHeight() {
+    var h = getDocHeight();
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'tripframe:height',
+        height: h
+      }, '*');
+    }
+  }
+
+  function sendHeightLater() {
+    sendHeight();
+    setTimeout(sendHeight, 50);
+    setTimeout(sendHeight, 200);
+    setTimeout(sendHeight, 500);
+    setTimeout(sendHeight, 1000);
+  }
+
+  document.addEventListener('DOMContentLoaded', sendHeightLater);
+  window.addEventListener('load', sendHeightLater);
+  window.addEventListener('pageshow', sendHeightLater);
+  window.addEventListener('resize', sendHeight);
+
+  if (window.ResizeObserver && document.documentElement) {
+    new ResizeObserver(function () {
+      sendHeight();
+    }).observe(document.documentElement);
+  }
+
+  if (window.MutationObserver && document.body) {
+    new MutationObserver(function () {
+      sendHeight();
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true
+    });
+  }
+})();
 </script>
 
 <!-- 追加: confirm() がブラウザ設定で抑止される場合に備えた簡易ダイアログ -->

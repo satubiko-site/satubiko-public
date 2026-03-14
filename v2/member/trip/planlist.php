@@ -887,6 +887,7 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
 </table>
 
 <script>
+<script>
 (function(){
   function ajaxify(selector, onSuccess, onFail){
     var forms = document.querySelectorAll(selector);
@@ -910,7 +911,6 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
           }).catch(function(){
             if(btn) btn.disabled = false;
             if(onFail) onFail(form, fd);
-            // ★追加：AJAXに失敗したら通常のフォーム送信にフォールバック
             try{ form.__noajax = true; form.submit(); }catch(e){}
           });
       });
@@ -926,20 +926,16 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
     return item;
   }
 
-  // 下山受け了承：ボタン→「下山受けを承知しました」へ、その場更新。必要なら下山確認ボタンも追加。
   ajaxify('form.ackform', function(form, fd, j){
     var id = fd.get('id');
     var item = flashItem(id);
 
-    // 受け了承メッセージに差し替え
     var span = document.createElement('span');
     span.className = 'ack-ok';
     span.textContent = '下山受け承知済';
     form.replaceWith(span);
 
-    // 当日なら「下山確認」ボタンを追加
     if(j.can_confirm && item){
-      // すでに存在する場合は追加しない
       if(!item.querySelector('form.confirmform')){
         var f = document.createElement('form');
         f.className = 'confirmform';
@@ -964,22 +960,24 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
         b.onclick=function(){ return confirm('下山確認を記録します。よろしいですか？'); };
         f.appendChild(b);
 
-        // span の右側に追加
         span.insertAdjacentElement('afterend', f);
 
-        // 追加したフォームにもAJAXを付ける（1個だけなので直付け）
         f.addEventListener('submit', function(ev){
           if(!window.fetch) return;
           ev.preventDefault();
           b.disabled=true;
           var fd2 = new FormData(f);
           fetch(f.getAttribute('action') || location.href, {
-            method:'POST', body:fd2, headers:{'X-Requested-With':'XMLHttpRequest'}
-          }).then(function(r){return r.json();}).then(function(j2){
-            if(!j2 || !j2.ok) throw new Error('bad');
-            // confirm成功処理（下の関数を使う）
-            onConfirmSuccess(f, fd2, j2);
-          }).catch(function(){ b.disabled=false; });
+            method:'POST',
+            body:fd2,
+            headers:{'X-Requested-With':'XMLHttpRequest'}
+          }).then(function(r){ return r.json(); })
+            .then(function(j2){
+              if(!j2 || !j2.ok) throw new Error('bad');
+              onConfirmSuccess(f, fd2, j2);
+            }).catch(function(){
+              b.disabled=false;
+            });
         });
       }
     }
@@ -987,7 +985,6 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
 
   function setStatusDescended(item){
     if(!item) return;
-    // ★修正：ステータス用バッジを優先して拾う（カテゴリ等のバッジを誤って書き換えない）
     var badge =
       item.querySelector('.badge.st-PLANNING, .badge.st-RECRUIT, .badge.st-PLAN_SUBMITTED, .badge.st-APPROVED, .badge.st-CLIMBING, .badge.st-DESCENDED, .badge.st-CANCELLED, .badge.st-CLOSED')
       || item.querySelector('.badge[class*="st-"]:not(.st-CAT)')
@@ -996,7 +993,6 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
       badge.className = 'badge st-DESCENDED';
       badge.textContent = '下山';
     }
-    // recruit/alarm の補助クラスを外す
     item.classList.remove('recruit');
     item.classList.remove('alarm');
   }
@@ -1008,75 +1004,100 @@ if($st==='PLAN_SUBMITTED' || $st==='APPROVED' || $st==='DESCENDED' || $st==='CAN
       var hm = j.hm || '';
       var t = hm ? (hm + '下山確認済') : '下山確認済';
 
-            // アラーム／待ち表示は不要になるため消す
       var alarm = item.querySelector('.alarmtext');
       if(alarm) alarm.remove();
       var waiting = item.querySelector('.waittext');
       if(waiting) waiting.remove();
 
-      // 「下山受け承知済」を上書き（同じ行でテイスト統一）
       var ack = item.querySelector('.ack-ok');
       if(ack){
         ack.className = 'descended-ok';
         ack.textContent = t;
       }else{
-        // 下山受け了承を無効化している運用では .ack-ok が無いので、ボタン位置を確認済表示に置換
         var div = document.createElement('span');
         div.className = 'descended-ok';
         div.textContent = t;
         form.replaceWith(div);
       }
 
-      // ステータス表示を下山に変更（表示の取りこぼし防止）
       setStatusDescended(item);
     }
   }
 
-  // 下山確認：メッセージを上書き＋ステータスも更新
   ajaxify('form.confirmform', onConfirmSuccess);
-
 })();
-</script>
 
-<iframe name="bg_line_send" style="display:none;"></iframe>
-</body>
-<script>
-function sendHeight(){
-  var h = Math.max(
-    document.body ? document.body.scrollHeight : 0,
-    document.body ? document.body.offsetHeight : 0,
-    document.documentElement ? document.documentElement.scrollHeight : 0,
-    document.documentElement ? document.documentElement.offsetHeight : 0
-  );
-  parent.postMessage({type:"resize", height:h}, "*");
-}
+(function () {
+  function getDocHeight() {
+    var b = document.body;
+    var e = document.documentElement;
+    return Math.max(
+      b ? b.scrollHeight : 0,
+      e ? e.scrollHeight : 0,
+      b ? b.offsetHeight : 0,
+      e ? e.offsetHeight : 0,
+      b ? b.clientHeight : 0,
+      e ? e.clientHeight : 0
+    );
+  }
 
-window.addEventListener("load", function(){
-  sendHeight();
-  setTimeout(sendHeight, 300);
-  setTimeout(sendHeight, 1000);
-});
+  function sendHeight() {
+    var h = getDocHeight();
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'tripframe:height',
+        height: h
+      }, '*');
+    }
+  }
 
-window.addEventListener("resize", sendHeight);
+  window.addEventListener('load', function () {
+    sendHeight();
+    setTimeout(sendHeight, 100);
+    setTimeout(sendHeight, 300);
+    setTimeout(sendHeight, 800);
+  });
 
-window.addEventListener("load", function(){
-  // URLに #trip-xxx などのハッシュがある場合は、その位置を優先
+  window.addEventListener('resize', sendHeight);
+  window.addEventListener('pageshow', sendHeight);
+
+  if (window.ResizeObserver && document.documentElement) {
+    new ResizeObserver(function () {
+      sendHeight();
+    }).observe(document.documentElement);
+  }
+
+  if (window.MutationObserver && document.body) {
+    new MutationObserver(function () {
+      sendHeight();
+    }).observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true
+    });
+  }
+})();
+
+window.addEventListener('load', function(){
   if (location.hash) {
     var id = location.hash.substring(1);
     var target = document.getElementById(id);
     if (target) {
-      target.scrollIntoView({behavior:"auto", block:"start"});
+      target.scrollIntoView({behavior:'auto', block:'start'});
     }
     return;
   }
 
-  // ハッシュが無いときだけ、スマホでは当日行へ寄せる
   if (window.innerWidth <= 768) {
-    var t = document.getElementById("todayrow");
+    var t = document.getElementById('todayrow');
     if (t) {
-      t.scrollIntoView({behavior:"auto", block:"start"});
+      t.scrollIntoView({behavior:'auto', block:'start'});
     }
   }
 });
 </script>
+
+<iframe name="bg_line_send" style="display:none;"></iframe>
+</body>
 </html>
